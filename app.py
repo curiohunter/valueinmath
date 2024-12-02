@@ -1,145 +1,252 @@
+# app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import json
 
-# 여기에서 이전에 작성한 LearningRecommender 클래스를 포함합니다.
-# 클래스 코드는 길기 때문에 이전 답변에서 복사하여 붙여넣으시면 됩니다.
+# LearningRecommender 클래스 정의
+class LearningRecommender:
+    def __init__(self, data):
+        self.data = data
+        # 최적 학습량 기준
+        self.optimal_daily_problems = {
+            'min': 15,  # 최소 문제 수
+            'max': 25,  # 최대 문제 수
+            'difficulty_ratio': {  # 난이도별 권장 비율
+                '상': 0.4,
+                '중': 0.4,
+                '하': 0.2
+            }
+        }
+        
+    def generate_daily_recommendation(self, user_id):
+        """일일 학습 권장사항 생성"""
+        student_data = self.data[self.data['User ID'] == user_id].copy()
+        if len(student_data) == 0:
+            return "학생 데이터가 없습니다."
+        
+        # 최근 7일 데이터 분석
+        recent_data = self._get_recent_pattern(student_data)
+        
+        # 권장사항 생성
+        recommendations = {
+            '학습량_분석': self._analyze_study_volume(recent_data),
+            '난이도_분포_분석': self._analyze_difficulty_distribution(recent_data),
+            '시간_관리_분석': self._analyze_time_management(recent_data),
+            '권장_학습_계획': self._create_study_plan(recent_data)
+        }
+        
+        return recommendations
 
-# 예시 데이터를 불러옵니다.
-data = {
-    'User ID': [1207341]*15,
-    'DateTime': [
-        '2024-06-05T15:17:11.961Z', '2024-06-05T15:15:13.214Z',
-        '2024-06-06T01:38:44.969Z', '2024-06-06T01:25:55.204Z',
-        '2024-06-05T11:16:46.553Z', '2024-06-05T16:17:13.837Z',
-        '2024-06-05T16:05:33.948Z', '2024-06-05T15:55:01.156Z',
-        '2024-06-05T15:45:44.114Z', '2024-06-08T12:18:06.877Z',
-        '2024-06-08T12:12:05.452Z', '2024-06-11T11:03:32.952Z',
-        '2024-06-11T11:02:34.122Z', '2024-06-08T09:44:35.844Z',
-        '2024-06-08T09:42:00.361Z'
-    ],
-    'Problem ID': [10880, 41271, 28255, 37703, 111680,
-                   28202, 90811, 38415, 10883, 10959,
-                   88251, 5204, 88012, 6929, 41405],
-    'Subject': ['수학 I']*15,
-    'Chapter': ['삼각함수']*9 + ['수열']*6,
-    'Section': ['삼각함수의 뜻과 그래프']*9 + ['등차수열과 등비수열']*6,
-    'Subsection': ['삼각함수의 활용']*9 + ['수열의 뜻, 등차수열의 일반항과 합']*6,
-    'Difficulty': ['상']*15,
-    'Correctness': ['O']*14 + ['X'],
-    'Time Spent (sec)': [115, 221, 766, 7200, 8,
-                         818, 629, 553, 465, 114,
-                         353, 55, 515, 123, 968]
-}
+    def _get_recent_pattern(self, data):
+        """최근 7일 학습 패턴 분석"""
+        try:
+            last_date = data['DateTime'].max()
+            recent_data = data[
+                data['DateTime'] >= last_date - pd.Timedelta(days=7)
+            ].copy()
+            return recent_data
+        except Exception as e:
+            print(f"최근 데이터 분석 중 오류 발생: {str(e)}")
+            return data
 
-df = pd.DataFrame(data)
-df['DateTime'] = pd.to_datetime(df['DateTime'])
-df['Correctness'] = df['Correctness'].map({'O': 1, 'X': 0})
+    def _analyze_study_volume(self, data):
+        """학습량 분석"""
+        try:
+            daily_problems = data.groupby(
+                data['DateTime'].dt.date
+            ).size()
+            mean_daily = daily_problems.mean()
+            return {
+                '현재_일평균': round(mean_daily, 1),
+                '최소': int(daily_problems.min()),
+                '최대': int(daily_problems.max()),
+                '적정여부': '적정' if self.optimal_daily_problems['min'] <= mean_daily <= self.optimal_daily_problems['max'] else '조정필요',
+                '권장_일일문제수': self._suggest_daily_volume(mean_daily)
+            }
+        except Exception as e:
+            print(f"학습량 분석 중 오류 발생: {str(e)}")
+            return {}
 
-# LearningRecommender 클래스 초기화
-recommender = LearningRecommender(df)
+    def _suggest_daily_volume(self, mean_daily):
+        """일일 권장 문제 수 제안"""
+        if mean_daily < self.optimal_daily_problems['min']:
+            return self.optimal_daily_problems['min']
+        elif mean_daily > self.optimal_daily_problems['max']:
+            return self.optimal_daily_problems['max']
+        return round(mean_daily)
 
-# Streamlit 앱 시작
-st.set_page_config(
-    page_title="학습 분석 및 추천 시스템",
-    layout="wide"
-)
+    def _analyze_difficulty_distribution(self, data):
+        """난이도 분포 분석"""
+        try:
+            if len(data) == 0:
+                return {}
+            current_dist = data['Difficulty'].value_counts(normalize=True)
+            current_ratio = current_dist.to_dict()
+            recommended_ratio = self.optimal_daily_problems['difficulty_ratio']
+            adjustment_needed = self._get_distribution_adjustment(current_ratio)
+            return {
+                '현재_분포': {
+                    level: f"{ratio*100:.1f}%" 
+                    for level, ratio in current_ratio.items()
+                },
+                '권장_분포': {
+                    level: f"{ratio*100:.1f}%" 
+                    for level, ratio in recommended_ratio.items()
+                },
+                '조정필요': adjustment_needed
+            }
+        except Exception as e:
+            print(f"난이도 분포 분석 중 오류 발생: {str(e)}")
+            return {}
 
-st.title("📊 학습 분석 및 추천 시스템")
-st.write("학생의 학습 데이터를 분석하여 맞춤형 학습 계획을 제공합니다.")
+    def _get_distribution_adjustment(self, current_ratio):
+        """난이도 분포 조정 필요 여부"""
+        adjustments = {}
+        recommended_ratio = self.optimal_daily_problems['difficulty_ratio']
+        for level in recommended_ratio.keys():
+            current = current_ratio.get(level, 0)
+            recommended = recommended_ratio[level]
+            if abs(current - recommended) > 0.1:
+                adjustments[level] = '조정 필요'
+            else:
+                adjustments[level] = '적정'
+        return adjustments
 
-# 사용자 선택 (예시에서는 하나의 사용자만 존재)
-user_id = st.selectbox("학생을 선택하세요:", df['User ID'].unique())
+    def _analyze_time_management(self, data):
+        """시간 관리 분석"""
+        try:
+            if len(data) == 0:
+                return {}
+            # 난이도별 평균 및 표준편차 계산
+            time_stats = data.groupby('Difficulty')['Time Spent (sec)'].agg(['mean', 'std'])
+            time_analysis = {}
+            consistency_threshold = 0.5  # 일관성 판단 기준
+            for diff in time_stats.index:
+                mean_time = time_stats.loc[diff, 'mean']
+                std_time = time_stats.loc[diff, 'std']
+                if np.isnan(std_time):  # 표준편차가 NaN인 경우 처리
+                    std_time = 0
+                time_analysis[diff] = {
+                    '평균시간': f"{mean_time:.1f}초",
+                    '표준편차': f"{std_time:.1f}초",
+                    '일관성': '안정' if (std_time / mean_time if mean_time != 0 else 0) < consistency_threshold else '불안정'
+                }
+            # 시간대별 성과 분석 추가
+            time_of_day = self._analyze_time_of_day_performance(data)
+            return {
+                '난이도별_시간': time_analysis,
+                '시간대별_성과': time_of_day,
+                '개선제안': self._generate_time_suggestions(time_stats)
+            }
+        except Exception as e:
+            print(f"시간 관리 분석 중 오류 발생: {str(e)}")
+            return {}
 
-# 분석 결과 가져오기
-recommendations = recommender.generate_daily_recommendation(user_id)
+    def _analyze_time_of_day_performance(self, data):
+        """시간대별 성과 분석"""
+        try:
+            data['Hour'] = data['DateTime'].dt.hour
+            time_slots = {
+                '오전(06-12시)': (6, 12),
+                '오후(12-18시)': (12, 18),
+                '저녁(18-24시)': (18, 24),
+                '새벽(00-06시)': (0, 6)
+            }
+            performance = {}
+            for slot_name, (start, end) in time_slots.items():
+                slot_data = data[(data['Hour'] >= start) & (data['Hour'] < end)]
+                if len(slot_data) > 0:
+                    performance[slot_name] = {
+                        '문제수': len(slot_data),
+                        '정답률': f"{(slot_data['Correctness'].mean() * 100):.1f}%",
+                        '평균시간': f"{slot_data['Time Spent (sec)'].mean():.1f}초"
+                    }
+            return performance
+        except Exception as e:
+            print(f"시간대별 분석 중 오류 발생: {str(e)}")
+            return {}
 
-# 학습량 분석 표시
-st.header("1️⃣ 학습량 분석")
-study_volume = recommendations.get('학습량_분석', {})
-if study_volume:
-    col1, col2, col3 = st.columns(3)
-    col1.metric("현재 일평균 문제 수", f"{study_volume.get('현재_일평균', 'N/A')} 문제")
-    col2.metric("최소 문제 수", f"{study_volume.get('최소', 'N/A')} 문제")
-    col3.metric("최대 문제 수", f"{study_volume.get('최대', 'N/A')} 문제")
-    st.write(f"적정 여부: **{study_volume.get('적정여부', 'N/A')}**")
-    st.write(f"권장 일일 문제 수: **{study_volume.get('권장_일일문제수', 'N/A')} 문제**")
-else:
-    st.warning("학습량 분석 데이터를 가져올 수 없습니다.")
+    def _generate_time_suggestions(self, time_stats):
+        """시간 관리 개선 제안"""
+        try:
+            suggestions = []
+            for diff in time_stats.index:
+                mean_time = time_stats.loc[diff, 'mean']
+                std_time = time_stats.loc[diff, 'std']
+                if np.isnan(std_time):  # 표준편차가 NaN인 경우 처리
+                    std_time = 0
+                if mean_time == 0:
+                    continue
+                if std_time / mean_time > 0.5:
+                    suggestions.append({
+                        '난이도': diff,
+                        '현상': '풀이시간 편차가 큽니다',
+                        '제안': '일관된 풀이 전략이 필요합니다'
+                    })
+                if mean_time > self._get_recommended_time(diff):
+                    suggestions.append({
+                        '난이도': diff,
+                        '현상': '평균 풀이시간이 깁니다',
+                        '제안': '기본 개념 복습이 필요합니다'
+                    })
+            return suggestions
+        except Exception as e:
+            print(f"개선 제안 생성 중 오류 발생: {str(e)}")
+            return []
 
-# 난이도 분포 분석 표시
-st.header("2️⃣ 난이도 분포 분석")
-difficulty_analysis = recommendations.get('난이도_분석', {})
-if difficulty_analysis:
-    st.subheader("현재 난이도 분포")
-    current_dist = pd.DataFrame.from_dict(difficulty_analysis.get('현재_분포', {}), orient='index', columns=['비율'])
-    st.bar_chart(current_dist)
+    def _get_recommended_time(self, difficulty):
+        """난이도별 권장 풀이시간"""
+        recommended_times = {
+            '하': 120,  # 2분
+            '중': 180,  # 3분
+            '상': 300   # 5분
+        }
+        return recommended_times.get(difficulty, 180)
 
-    st.subheader("권장 난이도 분포")
-    recommended_dist = pd.DataFrame.from_dict(difficulty_analysis.get('권장_분포', {}), orient='index', columns=['비율'])
-    st.bar_chart(recommended_dist)
+    def _create_study_plan(self, data):
+        """학습 계획 생성"""
+        try:
+            # 현재 성과 분석
+            performance = data.groupby('Difficulty')['Correctness'].mean()
+            # 학습 계획 생성
+            plan = {
+                '일일_목표': {
+                    '총문제수': int(self._suggest_daily_volume(len(data))),
+                    '난이도별_분포': self._get_recommended_distribution(performance),
+                    '시간대별_권장': self._get_time_recommendations(data)
+                },
+                '휴식_관리': {
+                    '세션당_문제수': '5-7문제',
+                    '쉬는시간': '15-20분',
+                    '총_세션': '3-4회'
+                },
+                '주간_계획': self._create_weekly_plan(performance)
+            }
+            return plan
+        except Exception as e:
+            print(f"학습 계획 생성 중 오류 발생: {str(e)}")
+            return {}
 
-    st.subheader("조정 필요 여부")
-    adjustment = difficulty_analysis.get('조정필요', {})
-    adjustment_df = pd.DataFrame(list(adjustment.items()), columns=['난이도', '조정 필요 여부'])
-    st.table(adjustment_df)
-else:
-    st.warning("난이도 분포 분석 데이터를 가져올 수 없습니다.")
-
-# 시간 관리 분석 표시
-st.header("3️⃣ 시간 관리 분석")
-time_analysis = recommendations.get('시간_분석', {})
-if time_analysis:
-    st.subheader("난이도별 시간 분석")
-    time_difficulty = pd.DataFrame.from_dict(time_analysis.get('난이도별_시간', {}), orient='index')
-    st.table(time_difficulty)
-
-    st.subheader("시간대별 성과")
-    time_performance = pd.DataFrame.from_dict(time_analysis.get('시간대별_성과', {}), orient='index')
-    st.table(time_performance)
-
-    st.subheader("개선 제안")
-    suggestions = time_analysis.get('개선제안', [])
-    if suggestions:
-        for suggestion in suggestions:
-            st.write(f"- 난이도 **{suggestion['난이도']}**: {suggestion['현상']} - {suggestion['제안']}")
-    else:
-        st.write("추가적인 개선 제안이 없습니다.")
-else:
-    st.warning("시간 관리 분석 데이터를 가져올 수 없습니다.")
-
-# 권장 학습 계획 표시
-st.header("4️⃣ 권장 학습 계획")
-study_plan = recommendations.get('권장_계획', {})
-if study_plan:
-    st.subheader("일일 목표")
-    daily_goal = study_plan.get('일일_목표', {})
-    st.write(f"- 총 문제 수: **{daily_goal.get('총문제수', 'N/A')} 문제**")
-
-    st.write("난이도별 분포:")
-    daily_difficulty = pd.DataFrame.from_dict(daily_goal.get('난이도별_분포', {}), orient='index', columns=['권장 비율'])
-    st.table(daily_difficulty)
-
-    st.write("시간대별 권장 사항:")
-    time_recommendation = daily_goal.get('시간대별_권장', {})
-    st.write(f"- 추천 시간대: **{time_recommendation.get('추천_시간대', 'N/A')}**")
-    st.write(f"- 예상 정답률: **{time_recommendation.get('예상_정답률', 'N/A')}**")
-    st.write(f"- 평균 소요 시간: **{time_recommendation.get('평균_소요시간', 'N/A')}**")
-
-    st.subheader("휴식 관리")
-    rest_management = study_plan.get('휴식_관리', {})
-    st.write(f"- 세션당 문제 수: **{rest_management.get('세션당_문제수', 'N/A')}**")
-    st.write(f"- 쉬는 시간: **{rest_management.get('쉬는시간', 'N/A')}**")
-    st.write(f"- 총 세션: **{rest_management.get('총_세션', 'N/A')}**")
-
-    st.subheader("주간 계획")
-    weekly_plan = study_plan.get('주간_계획', {})
-    st.write(f"- 주간 목표 문제 수: **{weekly_plan.get('주간_목표문제수', 'N/A')} 문제**")
-    st.write(f"- 중점 학습 영역: **{', '.join(weekly_plan.get('중점_학습영역', []))}**")
-    st.write("분배 제안:")
-    distribution = weekly_plan.get('분배_제안', {})
-    for key, value in distribution.items():
-        st.write(f"- {key}: {value}")
-else:
-    st.warning("권장 학습 계획 데이터를 가져올 수 없습니다.")
+    def _get_recommended_distribution(self, performance):
+        """난이도 분포 추천"""
+        try:
+            base_dist = self.optimal_daily_problems['difficulty_ratio'].copy()
+            # 성취도에 따른 조정
+            for diff in base_dist:
+                if diff in performance:
+                    if performance[diff] < 0.7:  # 70% 미만 성취도
+                        base_dist[diff] += 0.1
+                    elif performance[diff] > 0.9:  # 90% 이상 성취도
+                        base_dist[diff] -= 0.1
+            # 비율 정규화
+            total = sum(base_dist.values())
+            return {
+                level: f"{(ratio/total)*100:.1f}%"
+                for level, ratio in base_dist.items()
+            }
+        except Exception as e:
+            print(f"분포 추천 중 오류 발생: {str(e)}")
+            return {
+                l
